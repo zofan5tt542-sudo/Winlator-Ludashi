@@ -169,15 +169,21 @@ public class WinlatorHUD extends View {
         detectGpuPathOnce();
         loadPrefs();
         setLayerType(LAYER_TYPE_HARDWARE, null);
+
+        // ======= التعديل الجوهري: استعادة الحالة من التفضيلات =======
+        // بعد تحميل التفضيلات، نتحقق مما إذا كان المستخدم قد فعّل الـ HUD سابقاً
+        if (isSavedVisible()) {
+            // نفعّل الـ HUD مباشرة دون انتظار تدخل المستخدم
+            enableByUser();
+        }
+        // =============================================================
     }
 
     private void detectGpuPathOnce() {
         for (String p : GPU_PATHS) {
             if (new File(p).canRead()) { gpuPath = p; return; }
         }
-
         if (new File(GPU_BUSY).canRead()) gpuPath = GPU_BUSY;
-
     }
 
     private void initPaints() {
@@ -218,7 +224,6 @@ public class WinlatorHUD extends View {
     }
 
     public void onFrame() {
-
         if (!rendererActive && !userEnabled) return;
         frameAccum.incrementAndGet();
     }
@@ -241,17 +246,14 @@ public class WinlatorHUD extends View {
     private void readGpu() {
         if (gpuFailed) return;
         int v = -1;
-
         if (gpuPath != null) {
             v = gpuPath.equals(GPU_BUSY) ? readGpuBusy() : readPercent(gpuPath);
             if (v < 0) {
-
                 gpuFailed = true;
             }
         } else {
             gpuFailed = true; 
         }
-
         if (v != snapGpu) {
             snapGpu = v;
             strGpu = v >= 0 ? v + "%" : "N/A";
@@ -320,7 +322,6 @@ public class WinlatorHUD extends View {
     private void readBattery() {
         if (battFailed) return;
         try {
-
             long now = System.nanoTime();
             if (cachedBatteryIntent == null || now - lastBatteryRegisterNs >= BATT_REGISTER_INTERVAL_NS) {
                 cachedBatteryIntent = getContext().registerReceiver(null, batteryIntentFilter);
@@ -373,7 +374,6 @@ public class WinlatorHUD extends View {
             raw = readSysFsLong("/sys/class/power_supply/bms/current_now");
         if (raw == 0 || raw == Long.MIN_VALUE) return -1f;
         raw = Math.abs(raw);
-
         return raw < 20000 ? raw / 1000f : raw / 1000000f;
     }
 
@@ -587,7 +587,6 @@ public class WinlatorHUD extends View {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-
         if (userEnabled) {
             uiHandler.removeCallbacks(redrawRunnable);
             redrawScheduled = false;
@@ -624,7 +623,6 @@ public class WinlatorHUD extends View {
     }
 
     private void ensureVisible() {
-
         if (userEnabled) {
             if (getVisibility() != VISIBLE) setVisibility(VISIBLE);
             scheduleRedraw();
@@ -645,19 +643,19 @@ public class WinlatorHUD extends View {
     @Override
     protected void onVisibilityChanged(View v, int vis) {
         super.onVisibilityChanged(v, vis);
-
+        // لا نوقف التحديث إذا كان المستخدم قد فعّل الـ HUD، بل نستمر في الجدولة
         if (vis == VISIBLE && userEnabled) {
             scheduleRedraw();
-        } else {
-            uiHandler.removeCallbacks(redrawRunnable);
-            redrawScheduled = false;
+        } else if (vis != VISIBLE && userEnabled) {
+            // إذا أصبح غير مرئي بسبب النظام، نستمر في الجدولة لكن لا نرسم (onDraw لن يُستدعى)
+            // لكننا نستمر في التحديث حتى إذا عاد للرؤية يكون جاهزاً
+            // لا نوقف redraw لأننا نريده أن يظهر فوراً عند العودة
         }
     }
 
     @Override
     protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
-
         if (visibility == VISIBLE && userEnabled) {
             uiHandler.removeCallbacks(redrawRunnable);
             redrawScheduled = false;
@@ -673,8 +671,8 @@ public class WinlatorHUD extends View {
         setScaleX(scale); setScaleY(scale);
         setX(prefs.getFloat(KEY_X, 16f));
         setY(prefs.getFloat(KEY_Y, 16f));
-        userEnabled = false;
-        setVisibility(GONE);
+        // لا نضبط userEnabled هنا، بل نتركه كما هو (افتراضي false) وسيتم استعادته في المُنشئ
+        // نضع visibility بناءً على الحالة المحفوظة بعد enableByUser
     }
 
     private volatile boolean rendererActive = false;
@@ -686,7 +684,6 @@ public class WinlatorHUD extends View {
 
     public void enableByUser() {
         userEnabled = true;
-
         rendererActive = true;
         prefs.edit().putBoolean(KEY_VIS, true).apply();
         uiHandler.removeCallbacks(redrawRunnable);
@@ -729,7 +726,6 @@ public class WinlatorHUD extends View {
             wDynRend = pRend.measureText(strRend);
             layoutDirty = true;
             if (userEnabled) {
-
                 startStatsThread();
                 setVisibility(VISIBLE);
                 scheduleRedraw();
@@ -738,24 +734,24 @@ public class WinlatorHUD extends View {
     }
 
     public void onRendererGone() {
-
-        uiHandler.postDelayed(() -> {
-            if (rendererActive) return; 
-
-            frameAccum.set(0); snapFps = 0; lastFpsNs = 0;
-            if (!"0".equals(strFps)) { strFps = "0"; wDynFps = pVal.measureText("0"); }
+        // لا نخفي الـ HUD إذا كان المستخدم قد فعله، فقط نوقف تحديث الرندرر
+        // لكن نستمر في عرض البيانات القديمة أو نعرض "N/A" للرندرر
+        uiHandler.post(() -> {
             if (userEnabled) {
-
+                // نضع الرندرر كـ "N/A" أو نتركه كما هو
+                // ولا نغير visibility
+                // فقط نوقف محاولة قراءة الرندرر
+                rendererActive = false;
+                // نستمر في التحديثات الأخرى
                 invalidate();
-                return;
+            } else {
+                // إذا لم يكن مفعلاً من المستخدم، نغلقه
+                uiHandler.removeCallbacks(redrawRunnable);
+                redrawScheduled = false;
+                stopStatsThread();
+                setVisibility(GONE);
             }
-            uiHandler.removeCallbacks(redrawRunnable);
-            redrawScheduled = false;
-            stopStatsThread();
-            setVisibility(GONE);
-        }, 400);
-
-        rendererActive = false;
+        });
     }
 
     public void setRenderer(String name) {
@@ -767,7 +763,6 @@ public class WinlatorHUD extends View {
                 layoutDirty = true;
                 rendererActive = true;
                 if (userEnabled) {
-
                     startStatsThread();
                     if (getVisibility() != VISIBLE) {
                         setVisibility(VISIBLE);
@@ -799,7 +794,6 @@ public class WinlatorHUD extends View {
         if (cbGpu      != null) cbGpu.setChecked((showMask & SHOW_GPU)          != 0);
         if (cbCpuRam   != null) cbCpuRam.setChecked((showMask & SHOW_CPU)       != 0);
         if (cbBattTemp != null) cbBattTemp.setChecked((showMask & SHOW_BATT)    != 0);
-
         if (cbRenderer != null) cbRenderer.setChecked((showMask & SHOW_RENDERER)!= 0);
     }
 
@@ -817,7 +811,6 @@ public class WinlatorHUD extends View {
     }
 
     public void reset() {
-
         strRend = (isNative ? "+" : "") + rendererLabel;
         wDynRend = pRend.measureText(strRend);
         layoutDirty = true;
@@ -849,4 +842,4 @@ public class WinlatorHUD extends View {
             default: return 0;
         }
     }
-}
+            }
