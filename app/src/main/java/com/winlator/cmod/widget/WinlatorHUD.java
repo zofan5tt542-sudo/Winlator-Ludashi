@@ -917,4 +917,4 @@ public class WinlatorHUD extends View {
             default: return 0;
         }
     }
-    }
+            }
