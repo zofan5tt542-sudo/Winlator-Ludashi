@@ -18,6 +18,7 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewParent;
 
 import com.winlator.cmod.core.CPUStatus;
 
@@ -170,13 +171,9 @@ public class WinlatorHUD extends View {
         loadPrefs();
         setLayerType(LAYER_TYPE_HARDWARE, null);
 
-        // ======= التعديل الجوهري: استعادة الحالة من التفضيلات =======
-        // بعد تحميل التفضيلات، نتحقق مما إذا كان المستخدم قد فعّل الـ HUD سابقاً
         if (isSavedVisible()) {
-            // نفعّل الـ HUD مباشرة دون انتظار تدخل المستخدم
             enableByUser();
         }
-        // =============================================================
     }
 
     private void detectGpuPathOnce() {
@@ -550,6 +547,29 @@ public class WinlatorHUD extends View {
         return Math.max(1, r);
     }
 
+    // دالة مساعدة لتقييد الموضع داخل الشاشة
+    private void clampPosition() {
+        ViewParent parent = getParent();
+        if (parent instanceof View) {
+            View parentView = (View) parent;
+            int parentWidth = parentView.getWidth();
+            int parentHeight = parentView.getHeight();
+            int hudWidth = getWidth();
+            int hudHeight = getHeight();
+            
+            if (parentWidth > 0 && parentHeight > 0 && hudWidth > 0 && hudHeight > 0) {
+                float margin = 0f;
+                float newX = Math.max(margin, Math.min(getX(), parentWidth - hudWidth - margin));
+                float newY = Math.max(margin, Math.min(getY(), parentHeight - hudHeight - margin));
+                
+                if (newX != getX() || newY != getY()) {
+                    setX(newX);
+                    setY(newY);
+                }
+            }
+        }
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent e) {
         switch (e.getActionMasked()) {
@@ -563,7 +583,28 @@ public class WinlatorHUD extends View {
             case MotionEvent.ACTION_MOVE:
                 float dx = e.getRawX() - touchX, dy = e.getRawY() - touchY;
                 if (!dragging && Math.hypot(dx, dy) > DRAG_THRESH) dragging = true;
-                if (dragging) { setX(startX + dx); setY(startY + dy); }
+                if (dragging) {
+                    float newX = startX + dx;
+                    float newY = startY + dy;
+                    
+                    ViewParent parent = getParent();
+                    if (parent instanceof View) {
+                        View parentView = (View) parent;
+                        int parentWidth = parentView.getWidth();
+                        int parentHeight = parentView.getHeight();
+                        int hudWidth = getWidth();
+                        int hudHeight = getHeight();
+                        
+                        if (parentWidth > 0 && parentHeight > 0 && hudWidth > 0 && hudHeight > 0) {
+                            float margin = 0f;
+                            newX = Math.max(margin, Math.min(newX, parentWidth - hudWidth - margin));
+                            newY = Math.max(margin, Math.min(newY, parentHeight - hudHeight - margin));
+                        }
+                    }
+                    
+                    setX(newX);
+                    setY(newY);
+                }
                 return true;
             case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL:
@@ -591,7 +632,27 @@ public class WinlatorHUD extends View {
             uiHandler.removeCallbacks(redrawRunnable);
             redrawScheduled = false;
             setVisibility(VISIBLE);
+            // تطبيق التقييد عند الإرفاق
+            uiHandler.post(this::clampPosition);
             scheduleRedraw();
+        }
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        if (changed && userEnabled) {
+            // تقييد الموضع بعد أي تغيير في التخطيط
+            uiHandler.post(this::clampPosition);
+        }
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (userEnabled && w > 0 && h > 0) {
+            // تقييد الموضع عند تغيير الحجم
+            uiHandler.post(this::clampPosition);
         }
     }
 
@@ -625,11 +686,13 @@ public class WinlatorHUD extends View {
     private void ensureVisible() {
         if (userEnabled) {
             if (getVisibility() != VISIBLE) setVisibility(VISIBLE);
+            clampPosition(); // تطبيق التقييد عند الظهور
             scheduleRedraw();
         }
     }
 
     private void savePosition() {
+        // حفظ الموضع بعد التقييد
         prefs.edit().putFloat(KEY_X, getX()).putFloat(KEY_Y, getY()).apply();
     }
 
@@ -643,13 +706,9 @@ public class WinlatorHUD extends View {
     @Override
     protected void onVisibilityChanged(View v, int vis) {
         super.onVisibilityChanged(v, vis);
-        // لا نوقف التحديث إذا كان المستخدم قد فعّل الـ HUD، بل نستمر في الجدولة
         if (vis == VISIBLE && userEnabled) {
+            uiHandler.post(this::clampPosition);
             scheduleRedraw();
-        } else if (vis != VISIBLE && userEnabled) {
-            // إذا أصبح غير مرئي بسبب النظام، نستمر في الجدولة لكن لا نرسم (onDraw لن يُستدعى)
-            // لكننا نستمر في التحديث حتى إذا عاد للرؤية يكون جاهزاً
-            // لا نوقف redraw لأننا نريده أن يظهر فوراً عند العودة
         }
     }
 
@@ -659,7 +718,10 @@ public class WinlatorHUD extends View {
         if (visibility == VISIBLE && userEnabled) {
             uiHandler.removeCallbacks(redrawRunnable);
             redrawScheduled = false;
-            uiHandler.postDelayed(this::ensureVisible, 150);
+            uiHandler.postDelayed(() -> {
+                ensureVisible();
+                clampPosition();
+            }, 150);
         }
     }
 
@@ -671,8 +733,6 @@ public class WinlatorHUD extends View {
         setScaleX(scale); setScaleY(scale);
         setX(prefs.getFloat(KEY_X, 16f));
         setY(prefs.getFloat(KEY_Y, 16f));
-        // لا نضبط userEnabled هنا، بل نتركه كما هو (افتراضي false) وسيتم استعادته في المُنشئ
-        // نضع visibility بناءً على الحالة المحفوظة بعد enableByUser
     }
 
     private volatile boolean rendererActive = false;
@@ -690,7 +750,11 @@ public class WinlatorHUD extends View {
         redrawScheduled = false;
         startStatsThread();
         setVisibility(VISIBLE);
-        scheduleRedraw();
+        // تقييد الموضع عند التفعيل
+        uiHandler.post(() -> {
+            clampPosition();
+            scheduleRedraw();
+        });
     }
 
     public void disableByUser() { disableByUser(true); }
@@ -713,8 +777,15 @@ public class WinlatorHUD extends View {
             strRend = (isNative ? "+" : "") + rendererLabel;
             wDynRend = pRend.measureText(strRend);
             layoutDirty = true;
-            if (userEnabled) { setVisibility(VISIBLE); scheduleRedraw(); startStatsThread(); }
-            else              { setVisibility(GONE); stopStatsThread(); }
+            if (userEnabled) { 
+                setVisibility(VISIBLE); 
+                clampPosition();
+                scheduleRedraw(); 
+                startStatsThread(); 
+            } else {
+                setVisibility(GONE); 
+                stopStatsThread(); 
+            }
         });
     }
 
@@ -728,24 +799,18 @@ public class WinlatorHUD extends View {
             if (userEnabled) {
                 startStatsThread();
                 setVisibility(VISIBLE);
+                clampPosition();
                 scheduleRedraw();
             }
         });
     }
 
     public void onRendererGone() {
-        // لا نخفي الـ HUD إذا كان المستخدم قد فعله، فقط نوقف تحديث الرندرر
-        // لكن نستمر في عرض البيانات القديمة أو نعرض "N/A" للرندرر
         uiHandler.post(() -> {
             if (userEnabled) {
-                // نضع الرندرر كـ "N/A" أو نتركه كما هو
-                // ولا نغير visibility
-                // فقط نوقف محاولة قراءة الرندرر
                 rendererActive = false;
-                // نستمر في التحديثات الأخرى
                 invalidate();
             } else {
-                // إذا لم يكن مفعلاً من المستخدم، نغلقه
                 uiHandler.removeCallbacks(redrawRunnable);
                 redrawScheduled = false;
                 stopStatsThread();
@@ -766,8 +831,10 @@ public class WinlatorHUD extends View {
                     startStatsThread();
                     if (getVisibility() != VISIBLE) {
                         setVisibility(VISIBLE);
+                        clampPosition();
                         scheduleRedraw();
                     } else {
+                        clampPosition();
                         invalidate();
                     }
                 }
@@ -783,7 +850,12 @@ public class WinlatorHUD extends View {
         if (on) showMask |= bit; else showMask &= ~bit;
         prefs.edit().putInt(KEY_SHOW, showMask).apply();
         layoutDirty = true;
-        try { requestLayout(); invalidate(); } catch (Exception ignored) {}
+        try { 
+            requestLayout(); 
+            invalidate();
+            // تقييد الموضع بعد تغيير الحجم
+            uiHandler.post(this::clampPosition);
+        } catch (Exception ignored) {}
     }
 
     public void syncCheckboxes(android.widget.CheckBox cbFps, android.widget.CheckBox cbGpu,
@@ -802,6 +874,8 @@ public class WinlatorHUD extends View {
     public void setHudScale(float scale) {
         setScaleX(scale); setScaleY(scale);
         prefs.edit().putFloat(KEY_SCALE, scale).apply();
+        // تقييد الموضع بعد تغيير المقياس
+        uiHandler.post(this::clampPosition);
     }
 
     public void setHudAlpha(float a) {
@@ -827,6 +901,7 @@ public class WinlatorHUD extends View {
             prefs.edit().putBoolean(KEY_VIS, true).apply();
             startStatsThread();
             setVisibility(VISIBLE);
+            clampPosition();
             scheduleRedraw();
         });
     }
@@ -842,4 +917,4 @@ public class WinlatorHUD extends View {
             default: return 0;
         }
     }
-            }
+    }
