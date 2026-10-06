@@ -19,6 +19,7 @@ import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 
 import com.winlator.cmod.XServerDisplayActivity;
 import com.winlator.cmod.container.Container;
@@ -233,6 +234,11 @@ public class WinlatorHUD extends View {
         TSR = 11f * density;
         PAD = 6f * density;
         CORNER = 5f * density;
+
+        // مهم جدًا: ثبّت الـ pivot عند الزاوية العلوية اليسرى
+        // عشان setScaleX/Y يكبّر من 0,0 مش من المنتصف
+        setPivotX(0f);
+        setPivotY(0f);
 
         initPaints(density);
         detectGpuPathsOnce();
@@ -1153,10 +1159,12 @@ public class WinlatorHUD extends View {
 
                     View parent = getParentView();
                     if (parent != null && parent.getWidth() > 0 && parent.getHeight() > 0) {
-                        float w = getWidth()  * getScaleX();
-                        float h = getHeight() * getScaleY();
-                        float maxX = Math.max(0f, parent.getWidth()  - w);
-                        float maxY = Math.max(0f, parent.getHeight() - h);
+                        int mw = getMeasuredWidth()  > 0 ? getMeasuredWidth()  : getWidth();
+                        int mh = getMeasuredHeight() > 0 ? getMeasuredHeight() : getHeight();
+                        float visibleW = mw * getScaleX();
+                        float visibleH = mh * getScaleY();
+                        float maxX = Math.max(0f, parent.getWidth()  - visibleW);
+                        float maxY = Math.max(0f, parent.getHeight() - visibleH);
                         nx = Math.max(0f, Math.min(nx, maxX));
                         ny = Math.max(0f, Math.min(ny, maxY));
                     }
@@ -1241,20 +1249,23 @@ public class WinlatorHUD extends View {
         int ph = parent.getHeight();
         if (pw <= 0 || ph <= 0) return;
 
-        float w = getWidth()  * getScaleX();
-        float h = getHeight() * getScaleY();
-        if (w <= 0f || h <= 0f) return;
+        int mw = getMeasuredWidth();
+        int mh = getMeasuredHeight();
+        if (mw <= 0) mw = getWidth();
+        if (mh <= 0) mh = getHeight();
+        if (mw <= 0 || mh <= 0) return;
 
-        float maxX = Math.max(0f, pw - w);
-        float maxY = Math.max(0f, ph - h);
+        float visibleW = mw * getScaleX();
+        float visibleH = mh * getScaleY();
+
+        float maxX = Math.max(0f, pw - visibleW);
+        float maxY = Math.max(0f, ph - visibleH);
 
         float nx = Math.max(0f, Math.min(getX(), maxX));
         float ny = Math.max(0f, Math.min(getY(), maxY));
 
-        if (nx != getX() || ny != getY()) {
-            setX(nx);
-            setY(ny);
-        }
+        if (Math.abs(nx - getX()) > 0.01f) setX(nx);
+        if (Math.abs(ny - getY()) > 0.01f) setY(ny);
     }
 
     private void startStatsThread() {
@@ -1551,8 +1562,26 @@ public class WinlatorHUD extends View {
         setScaleX(scale);
         setScaleY(scale);
         if (isFinalInput) prefs.edit().putFloat(KEY_SCALE, scale).apply();
+
+        // clamp فوري
+        clampToParent();
+
+        // clamp بعد layout cycle عادي
         post(this::clampToParent);
-        uiHandler.postDelayed(this::clampToParent, 100);
+        uiHandler.postDelayed(this::clampToParent, 80);
+        uiHandler.postDelayed(this::clampToParent, 250);
+
+        // clamp بعد أول global layout بالأبعاد الجديدة
+        getViewTreeObserver().addOnGlobalLayoutListener(
+                new ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        if (getViewTreeObserver().isAlive()) {
+                            getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                        }
+                        clampToParent();
+                    }
+                });
     }
 
     public void setHudAlpha(float alpha, boolean isFinalInput) {
@@ -1632,4 +1661,4 @@ public class WinlatorHUD extends View {
                 return 0;
         }
     }
-    }
+        }
