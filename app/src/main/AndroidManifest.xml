@@ -70,7 +70,7 @@
             </intent-filter>
         </activity>
 
-        <activity android:name="com.winlator.cmod.BigPictureActivity" android:theme="@style/Theme.AppCompat" android:exported="false" />
+        <activity android:name="com.winlator.cmod.BigPictureActivity" android:theme="@style/Theme.AppCompat" android:exported="false" android:screenOrientation="landscape" />
 
         <activity
             android:name="com.winlator.cmod.XServerDisplayActivity"
