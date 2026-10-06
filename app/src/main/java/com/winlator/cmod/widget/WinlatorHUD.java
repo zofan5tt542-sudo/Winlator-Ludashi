@@ -18,6 +18,7 @@ import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 
 import com.winlator.cmod.XServerDisplayActivity;
 import com.winlator.cmod.container.Container;
@@ -1147,8 +1148,21 @@ public class WinlatorHUD extends View {
                 float dy = event.getRawY() - touchY;
                 if (!dragging && Math.hypot(dx, dy) > DRAG_THRESH) dragging = true;
                 if (dragging) {
-                    setX(startX + dx);
-                    setY(startY + dy);
+                    float nx = startX + dx;
+                    float ny = startY + dy;
+
+                    View parent = getParentView();
+                    if (parent != null && parent.getWidth() > 0 && parent.getHeight() > 0) {
+                        float w = getWidth()  * getScaleX();
+                        float h = getHeight() * getScaleY();
+                        float maxX = Math.max(0f, parent.getWidth()  - w);
+                        float maxY = Math.max(0f, parent.getHeight() - h);
+                        nx = Math.max(0f, Math.min(nx, maxX));
+                        ny = Math.max(0f, Math.min(ny, maxY));
+                    }
+
+                    setX(nx);
+                    setY(ny);
                 }
                 return true;
 
@@ -1165,12 +1179,14 @@ public class WinlatorHUD extends View {
                 }
 
                 if (dragging) {
+                    clampToParent();
                     savePosition();
                 } else if (touchDownMs > 0
                         && System.currentTimeMillis() - touchDownMs < 300) {
                     vertical = !vertical;
                     prefs.edit().putBoolean(KEY_VERT, vertical).apply();
                     requestRelayout();
+                    uiHandler.postDelayed(this::clampToParent, 250);
                     uiHandler.postDelayed(this::ensureVisible, 250);
                 }
                 dragging = false;
@@ -1191,6 +1207,8 @@ public class WinlatorHUD extends View {
             setVisibility(VISIBLE);
             scheduleRedraw();
         }
+        uiHandler.postDelayed(this::clampToParent, 100);
+        uiHandler.postDelayed(this::clampToParent, 400);
     }
 
     @Override
@@ -1200,6 +1218,43 @@ public class WinlatorHUD extends View {
         uiHandler.removeCallbacks(redrawRunnable);
         stopStatsThread();
         redrawScheduled = false;
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        if (w != oldw || h != oldh) {
+            uiHandler.post(this::clampToParent);
+        }
+    }
+
+    private View getParentView() {
+        if (getParent() instanceof View) return (View) getParent();
+        return null;
+    }
+
+    private void clampToParent() {
+        View parent = getParentView();
+        if (parent == null) return;
+
+        int pw = parent.getWidth();
+        int ph = parent.getHeight();
+        if (pw <= 0 || ph <= 0) return;
+
+        float w = getWidth()  * getScaleX();
+        float h = getHeight() * getScaleY();
+        if (w <= 0f || h <= 0f) return;
+
+        float maxX = Math.max(0f, pw - w);
+        float maxY = Math.max(0f, ph - h);
+
+        float nx = Math.max(0f, Math.min(getX(), maxX));
+        float ny = Math.max(0f, Math.min(getY(), maxY));
+
+        if (nx != getX() || ny != getY()) {
+            setX(nx);
+            setY(ny);
+        }
     }
 
     private void startStatsThread() {
@@ -1257,6 +1312,7 @@ public class WinlatorHUD extends View {
             uiHandler.removeCallbacks(redrawRunnable);
             redrawScheduled = false;
             uiHandler.postDelayed(this::ensureVisible, 150);
+            uiHandler.postDelayed(this::clampToParent, 200);
         }
     }
 
@@ -1293,6 +1349,7 @@ public class WinlatorHUD extends View {
         setY(prefs.getFloat(KEY_Y, 16f));
         userEnabled = false;
         setVisibility(GONE);
+        post(this::clampToParent);
     }
 
     public static boolean isOptionEnabled(Context context, int bit) {
@@ -1329,6 +1386,8 @@ public class WinlatorHUD extends View {
         startStatsThread();
         setVisibility(VISIBLE);
         scheduleRedraw();
+        uiHandler.postDelayed(this::clampToParent, 100);
+        uiHandler.postDelayed(this::clampToParent, 300);
     }
 
     public void disableByUser() {
@@ -1358,6 +1417,7 @@ public class WinlatorHUD extends View {
                 setVisibility(VISIBLE);
                 scheduleRedraw();
                 startStatsThread();
+                uiHandler.postDelayed(this::clampToParent, 150);
             } else {
                 setVisibility(GONE);
                 stopStatsThread();
@@ -1383,6 +1443,7 @@ public class WinlatorHUD extends View {
                 startStatsThread();
                 setVisibility(VISIBLE);
                 scheduleRedraw();
+                uiHandler.postDelayed(this::clampToParent, 150);
             }
         });
     }
@@ -1434,6 +1495,7 @@ public class WinlatorHUD extends View {
                     setVisibility(VISIBLE);
                     scheduleRedraw();
                 }
+                uiHandler.postDelayed(this::clampToParent, 150);
             }
         });
     }
@@ -1446,6 +1508,7 @@ public class WinlatorHUD extends View {
         uiHandler.post(() -> {
             wDynGpuName = pGpuName.measureText(gpuNameLabel);
             requestRelayout();
+            uiHandler.postDelayed(this::clampToParent, 150);
         });
     }
 
@@ -1456,6 +1519,7 @@ public class WinlatorHUD extends View {
         else showMask &= ~bit;
         prefs.edit().putInt(KEY_SHOW, showMask).apply();
         requestRelayout();
+        uiHandler.postDelayed(this::clampToParent, 100);
     }
 
     public float getHudAlpha() {
@@ -1487,6 +1551,8 @@ public class WinlatorHUD extends View {
         setScaleX(scale);
         setScaleY(scale);
         if (isFinalInput) prefs.edit().putFloat(KEY_SCALE, scale).apply();
+        post(this::clampToParent);
+        uiHandler.postDelayed(this::clampToParent, 100);
     }
 
     public void setHudAlpha(float alpha, boolean isFinalInput) {
@@ -1536,6 +1602,8 @@ public class WinlatorHUD extends View {
             setVisibility(VISIBLE);
             scheduleRedraw();
             requestRelayout();
+            uiHandler.postDelayed(this::clampToParent, 150);
+            uiHandler.postDelayed(this::clampToParent, 400);
         });
     }
 
@@ -1564,5 +1632,4 @@ public class WinlatorHUD extends View {
                 return 0;
         }
     }
-}
-
+    }
