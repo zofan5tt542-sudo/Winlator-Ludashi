@@ -62,6 +62,7 @@
             android:name="com.winlator.cmod.MainActivity"
             android:theme="@style/AppTheme.Dark"
             android:screenOrientation="sensor"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation">
             <intent-filter>
